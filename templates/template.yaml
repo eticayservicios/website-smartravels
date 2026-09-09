@@ -39,8 +39,8 @@ Parameters:
 
   WwwDomainName:
     Type: String
-    Default: ''
-    Description: Optional extra hostname. Leave empty for the subdomain-only alias.
+    Default: www.smartravelevents.smartravelevents.com
+    Description: www hostname. Included in the ACM certificate and CloudFront aliases.
 
   CertificateArn:
     Type: String

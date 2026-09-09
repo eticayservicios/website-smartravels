@@ -76,6 +76,7 @@ jobs:
             --output text)
 
           for arn in $arns; do
+            [ -z "$arn" ] && continue
             names=$(aws acm describe-certificate \
               --region "${AWS_REGION}" \
               --certificate-arn "$arn" \
@@ -91,13 +92,13 @@ jobs:
             fi
           done
 
-          if [ -z "$found" ]; then
-            echo "::error::No hay certificado ACM ISSUED en us-east-1 para ${SITE_DOMAIN} ni *.smartravelevents.com. Añade el secret CERTIFICATE_ARN."
-            exit 1
+          if [ -n "$found" ]; then
+            echo "Certificado existente: $found"
+            echo "arn=${found}" >> "$GITHUB_OUTPUT"
+          else
+            echo "No hay certificado ISSUED. El stack creará uno para ${SITE_DOMAIN} y www.${SITE_DOMAIN}."
+            echo "arn=" >> "$GITHUB_OUTPUT"
           fi
-
-          echo "Certificado encontrado: $found"
-          echo "arn=${found}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve Route 53 hosted zone
         id: zone
@@ -132,7 +133,25 @@ jobs:
         run: sam validate --lint -t ${{ env.TEMPLATE_FILE }} --region ${{ env.AWS_REGION }}
 
       - name: Deploy stack
+        env:
+          CERT_ARN: ${{ steps.cert.outputs.arn }}
+          ZONE_ID: ${{ steps.zone.outputs.id }}
         run: |
+          PARAM_OVERRIDES=(
+            "ProjectName=website-smartravels"
+            "SiteName=smartravels"
+            "Environment=prod"
+            "BucketName=smartravelevents-com-prod"
+            "DomainName=${SITE_DOMAIN}"
+            "WwwDomainName=www.${SITE_DOMAIN}"
+            "HostedZoneId=${ZONE_ID}"
+            "PriceClass=PriceClass_100"
+          )
+
+          if [ -n "$CERT_ARN" ]; then
+            PARAM_OVERRIDES+=("CertificateArn=${CERT_ARN}")
+          fi
+
           sam deploy \
             --template-file "${TEMPLATE_FILE}" \
             --stack-name "${STACK_NAME}" \
@@ -141,16 +160,7 @@ jobs:
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
             --resolve-s3 \
-            --parameter-overrides \
-              "ProjectName=website-smartravels" \
-              "SiteName=smartravels" \
-              "Environment=prod" \
-              "BucketName=smartravelevents-com-prod" \
-              "DomainName=${SITE_DOMAIN}" \
-              "WwwDomainName=" \
-              "CertificateArn=${{ steps.cert.outputs.arn }}" \
-              "HostedZoneId=${{ steps.zone.outputs.id }}" \
-              "PriceClass=PriceClass_100"
+            --parameter-overrides "${PARAM_OVERRIDES[@]}"
 
       - name: Show stack outputs
         run: |
@@ -159,4 +169,4 @@ jobs:
             --region "${AWS_REGION}" \
             --query 'Stacks[0].Outputs' \
             --output table
-          echo "Route 53 alias: ${SITE_DOMAIN} → CloudFront (hosted zone ${{ steps.zone.outputs.id }})"
+          echo "Route 53 alias: ${SITE_DOMAIN} y www.${SITE_DOMAIN} → CloudFront (hosted zone ${{ steps.zone.outputs.id }})"
