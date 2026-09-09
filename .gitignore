@@ -6,3 +6,6 @@
 *.key
 .idea/
 .vscode/
+node_modules/
+.next/
+out/

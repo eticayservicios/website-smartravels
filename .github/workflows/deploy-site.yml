@@ -1,6 +1,6 @@
 name: Deploy site content
 
-# Sube site/ al bucket S3 e invalida CloudFront.
+# Build Next.js static export, sync out/ to S3 and invalidate CloudFront.
 
 on:
   workflow_dispatch:
@@ -9,7 +9,14 @@ on:
       - main
       - prod
     paths:
-      - 'site/**'
+      - 'app/**'
+      - 'components/**'
+      - 'lib/**'
+      - 'public/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'next.config.ts'
+      - 'tsconfig.json'
       - '.github/workflows/deploy-site.yml'
 
 env:
@@ -18,13 +25,25 @@ env:
 
 jobs:
   deploy:
-    name: Sync to S3
+    name: Build and sync to S3
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install and build
+        run: |
+          npm ci
+          npm run build
+          test -d out
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -55,17 +74,14 @@ jobs:
 
       - name: Upload site to S3
         run: |
-          aws s3 sync site/ "s3://${{ steps.stack.outputs.bucket }}/" \
+          aws s3 sync out/ "s3://${{ steps.stack.outputs.bucket }}/" \
             --delete \
-            --cache-control "public, max-age=3600" \
-            --exclude "index.html" \
-            --exclude "404.html"
+            --cache-control "public, max-age=31536000, immutable" \
+            --exclude "*.html"
 
-          aws s3 cp site/index.html "s3://${{ steps.stack.outputs.bucket }}/index.html" \
-            --cache-control "no-cache, no-store, must-revalidate" \
-            --content-type "text/html; charset=utf-8"
-
-          aws s3 cp site/404.html "s3://${{ steps.stack.outputs.bucket }}/404.html" \
+          aws s3 sync out/ "s3://${{ steps.stack.outputs.bucket }}/" \
+            --exclude "*" \
+            --include "*.html" \
             --cache-control "no-cache, no-store, must-revalidate" \
             --content-type "text/html; charset=utf-8"
 

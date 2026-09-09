@@ -1,79 +1,46 @@
 # website-smartravels
 
-Infraestructura y contenido de **smartravelevents.com** en S3 + CloudFront.
+Sitio estático Next.js de Smart Travel Events, servido en S3 + CloudFront.
 
-El sitio se sirve como export estático de WordPress (HTML). PHP, MySQL y el admin quedan fuera de AWS.
+El dominio de CloudFront es **smartravelevents.smartravelevents.com**. El WordPress de `www.smartravelevents.com` no se toca.
 
 ## Quick path
 
-1. En GitHub, confirma los secrets `AWS_ACCESS_KEY_ID` y `AWS_SECRET_ACCESS_KEY` (Settings → Secrets and variables → Actions → Secrets).
-2. Haz push a `main` o `prod`, o ejecuta **Actions → Deploy infrastructure → Run workflow**.
-3. Revisa los outputs del stack: bucket S3 y dominio CloudFront (`*.cloudfront.net`).
-4. El workflow **Deploy site content** sube `site/` (página de bienvenida) al bucket e invalida CloudFront.
+1. Confirma en GitHub los secrets `AWS_ACCESS_KEY_ID` y `AWS_SECRET_ACCESS_KEY`.
+2. Opcional: secrets `CERTIFICATE_ARN` y `HOSTED_ZONE_ID`. Si no están, el workflow busca el certificado ACM y la hosted zone `smartravelevents.com`.
+3. Push a `prod` o ejecuta **Actions → Deploy infrastructure**.
+4. El stack crea en Route 53 el alias `smartravelevents.smartravelevents.com` → CloudFront (equivalente al CNAME).
+5. Ejecuta **Deploy site content** para publicar el export de Next.js.
 
 ## Qué crea el stack
 
 | Recurso | Nombre |
 |---|---|
-| Stack CloudFormation | `website-smartravels-prod` |
+| Stack | `website-smartravels-prod` |
 | Bucket S3 | `smartravelevents-com-prod` |
-| CloudFront | distribución con OAC |
+| Alias CloudFront | `smartravelevents.smartravelevents.com` |
 | Región | `us-east-1` |
 
 ```text
-Internet → CloudFront (HTTPS) → OAC → S3 privado
+Internet → CloudFront (HTTPS + certificado ACM) → OAC → S3 privado
 ```
 
-Sin hosted zone ni certificado configurados, el sitio queda en `https://xxxx.cloudfront.net`. El dominio `smartravelevents.com` se conecta después añadiendo DNS y certificado ACM.
+## DNS (Route 53)
 
-## Secrets de GitHub
+El deploy busca la hosted zone `smartravelevents.com` y crea un **alias A/AAAA** hacia CloudFront. En Route 53 ese es el equivalente correcto a un CNAME para CloudFront.
 
-Solo necesitas estos dos **repository secrets**:
+| Registro | Tipo | Destino |
+|---|---|---|
+| `smartravelevents.smartravelevents.com` | A + AAAA (alias) | distribución CloudFront |
 
-| Secret | Uso |
-|---|---|
-| `AWS_ACCESS_KEY_ID` | Credencial IAM |
-| `AWS_SECRET_ACCESS_KEY` | Credencial IAM |
+Hace falta que esa hosted zone exista en la misma cuenta AWS. El certificado ACM debe estar **emitido en us-east-1** e incluir ese hostname o `*.smartravelevents.com`.
 
-En GitHub Actions, Secrets y Variables no son lo mismo:
-
-| Dónde lo guardaste | Cómo lo lee el workflow |
-|---|---|
-| **Secrets** | `${{ secrets.AWS_ACCESS_KEY_ID }}` (esto es lo que usa el repo) |
-| **Variables** | `${{ vars.AWS_ACCESS_KEY_ID }}` |
-
-Si los guardaste dentro de un **Environment** de GitHub (por ejemplo `production`), añade esto al job en `.github/workflows/deploy-infra.yml`:
-
-```yaml
-jobs:
-  deploy:
-    environment: production
-```
-
-## Deploy local (opcional)
+## Sitio Next.js
 
 ```bash
-sam validate --lint -t templates/template.yaml
-
-sam deploy \
-  --template-file templates/template.yaml \
-  --stack-name website-smartravels-prod \
-  --region us-east-1 \
-  --capabilities CAPABILITY_IAM \
-  --resolve-s3
+npm install
+npm run dev
+npm run build   # genera out/ para S3
 ```
 
-## Contenido actual
-
-`site/index.html` muestra **Hola, bienvenido a Smart Travel Events**. `site/404.html` cubre rutas inexistentes.
-
-Cuando tengas el export de WordPress, reemplaza el contenido de `site/` y haz push a `main` o `prod`.
-
-## Permisos IAM mínimos
-
-El usuario IAM necesita, como mínimo:
-
-* CloudFormation sobre el stack `website-smartravels-prod`
-* S3 (bucket del sitio + bucket temporal de SAM con `--resolve-s3`)
-* CloudFront (distribución, OAC, functions)
-* IAM (crear roles que pida CloudFormation)
+Rutas: `/`, `/cotizar/`, `/visitanos/`, `/sugerencia/` y páginas legales. Los formularios abren el correo hacia `info@smartravelevents.com` (el sitio es estático, sin PHP).
