@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >-
-  smartravelevents.com — static WordPress export hosting.
+  smartravelevents.smartravelevents.com — static Next.js hosting.
   Private S3 origin behind CloudFront with Origin Access Control.
 
 Parameters:
@@ -32,15 +32,15 @@ Parameters:
 
   DomainName:
     Type: String
-    Default: smartravelevents.com
+    Default: smartravelevents.smartravelevents.com
     Description: >-
-      Apex domain. CloudFront uses it only when a certificate is available.
-      Without HostedZoneId the stack deploys on *.cloudfront.net.
+      CloudFront alias. Requires CertificateArn (or HostedZoneId to create ACM).
+      Without a certificate the stack stays on *.cloudfront.net.
 
   WwwDomainName:
     Type: String
-    Default: www.smartravelevents.com
-    Description: Optional www hostname. Redirects to the apex when active.
+    Default: ''
+    Description: Optional extra hostname. Leave empty for the subdomain-only alias.
 
   CertificateArn:
     Type: String
@@ -50,7 +50,7 @@ Parameters:
   HostedZoneId:
     Type: String
     Default: ''
-    Description: Route 53 hosted zone ID. Required for DNS and auto certificate.
+    Description: Route 53 hosted zone ID for smartravelevents.com. Creates alias A/AAAA to CloudFront.
 
   PriceClass:
     Type: String

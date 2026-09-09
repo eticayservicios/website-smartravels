@@ -1,7 +1,8 @@
 name: Deploy infrastructure
 
-# S3 + CloudFront for smartravelevents.com
+# S3 + CloudFront alias smartravelevents.smartravelevents.com
 # Requires GitHub secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+# Optional secrets: CERTIFICATE_ARN, HOSTED_ZONE_ID. If missing, the job looks them up.
 
 on:
   workflow_dispatch:
@@ -18,6 +19,8 @@ env:
   AWS_REGION: us-east-1
   STACK_NAME: website-smartravels-prod
   TEMPLATE_FILE: templates/template.yaml
+  SITE_DOMAIN: smartravelevents.smartravelevents.com
+  HOSTED_ZONE_NAME: smartravelevents.com
 
 jobs:
   deploy:
@@ -54,6 +57,74 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Resolve ACM certificate
+        id: cert
+        env:
+          CERTIFICATE_ARN: ${{ secrets.CERTIFICATE_ARN }}
+        run: |
+          if [ -n "$CERTIFICATE_ARN" ]; then
+            echo "Usando secret CERTIFICATE_ARN"
+            echo "arn=${CERTIFICATE_ARN}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          found=""
+          arns=$(aws acm list-certificates \
+            --region "${AWS_REGION}" \
+            --certificate-statuses ISSUED \
+            --query 'CertificateSummaryList[].CertificateArn' \
+            --output text)
+
+          for arn in $arns; do
+            names=$(aws acm describe-certificate \
+              --region "${AWS_REGION}" \
+              --certificate-arn "$arn" \
+              --query 'Certificate.SubjectAlternativeNames[]' \
+              --output text)
+            if echo "$names" | tr '\t' '\n' | grep -qx "${SITE_DOMAIN}"; then
+              found="$arn"
+              break
+            fi
+            if echo "$names" | tr '\t' '\n' | grep -qx "*.smartravelevents.com"; then
+              found="$arn"
+              break
+            fi
+          done
+
+          if [ -z "$found" ]; then
+            echo "::error::No hay certificado ACM ISSUED en us-east-1 para ${SITE_DOMAIN} ni *.smartravelevents.com. Añade el secret CERTIFICATE_ARN."
+            exit 1
+          fi
+
+          echo "Certificado encontrado: $found"
+          echo "arn=${found}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve Route 53 hosted zone
+        id: zone
+        env:
+          HOSTED_ZONE_ID: ${{ secrets.HOSTED_ZONE_ID }}
+        run: |
+          if [ -n "$HOSTED_ZONE_ID" ]; then
+            echo "Usando secret HOSTED_ZONE_ID"
+            echo "id=${HOSTED_ZONE_ID}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          zone_id=$(aws route53 list-hosted-zones-by-name \
+            --dns-name "${HOSTED_ZONE_NAME}" \
+            --query "HostedZones[?Name=='${HOSTED_ZONE_NAME}.'].Id | [0]" \
+            --output text)
+
+          zone_id="${zone_id#/hostedzone/}"
+
+          if [ -z "$zone_id" ] || [ "$zone_id" = "None" ] || [ "$zone_id" = "null" ]; then
+            echo "::error::No hay hosted zone de Route 53 para ${HOSTED_ZONE_NAME} en esta cuenta. Créala o añade el secret HOSTED_ZONE_ID."
+            exit 1
+          fi
+
+          echo "Hosted zone encontrada: $zone_id"
+          echo "id=${zone_id}" >> "$GITHUB_OUTPUT"
+
       - name: Setup SAM CLI
         uses: aws-actions/setup-sam@v2
 
@@ -75,8 +146,10 @@ jobs:
               "SiteName=smartravels" \
               "Environment=prod" \
               "BucketName=smartravelevents-com-prod" \
-              "DomainName=smartravelevents.com" \
-              "WwwDomainName=www.smartravelevents.com" \
+              "DomainName=${SITE_DOMAIN}" \
+              "WwwDomainName=" \
+              "CertificateArn=${{ steps.cert.outputs.arn }}" \
+              "HostedZoneId=${{ steps.zone.outputs.id }}" \
               "PriceClass=PriceClass_100"
 
       - name: Show stack outputs
@@ -86,3 +159,4 @@ jobs:
             --region "${AWS_REGION}" \
             --query 'Stacks[0].Outputs' \
             --output table
+          echo "Route 53 alias: ${SITE_DOMAIN} → CloudFront (hosted zone ${{ steps.zone.outputs.id }})"
